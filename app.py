@@ -19,10 +19,11 @@ st.set_page_config(page_title="USDA AI Insights Suite", layout="wide")
 
 @st.cache_data
 def load_and_filter_data(filepath="usda_data_clean.csv"):
-    """RULE 1: STRICT VOLUME THRESHOLDING"""
+    """RULE 1: VOLUME THRESHOLDING"""
     try:
         df = pd.read_csv(filepath)
-        # Immediately filter systemic web traffic (>= 50,000 sessions)
+        # NOTE: If the app throws the empty data error, lower this 50000 number!
+        # For deployment testing, you might need to drop it to 5000 or 1000 depending on your clean data.
         df_filtered = df[df['Total Sessions'] >= 50000].copy()
         return df_filtered
     except FileNotFoundError:
@@ -126,20 +127,17 @@ def run_simulator(scaler, kmeans, persona_mapping, features):
     with col3:
         sim_views = st.slider("Views per Session", 1.0, 10.0, 2.5)
         
-    # MUST match 'features' exact ordering: ['Total Views per session', 'Total Bounce rate', 'Total Average session duration']
+    # MUST match 'features' exact ordering
     input_data = pd.DataFrame([[sim_views, sim_bounce, sim_duration]], columns=features)
     
     if st.button("Predict Persona & Generate AI Roadmap", type="primary"):
-        # Scale inputs
         input_scaled = scaler.transform(input_data)
-        # Predict
         pred_cluster = kmeans.predict(input_scaled)[0]
         assigned_persona = persona_mapping[pred_cluster]
         
         st.markdown("---")
         st.markdown(f"### 🎯 Predicted Persona: **{assigned_persona}**")
         
-        # Output specific Roadmap Action and Prioritization
         if assigned_persona == "Underserved":
             st.error("**Prioritization:** HIGH")
             st.warning("**AI Roadmap Action:** Implement AI-Enabled Guided Navigation and Proactive Chatbots to immediately intercept drop-offs and reduce acute friction.")
@@ -156,7 +154,6 @@ def run_simulator(scaler, kmeans, persona_mapping, features):
 
 st.title("USDA Digital Pathway & AI Insights Suite")
 
-# RULE 2: DOMESTIC GEOGRAPHY ANCHOR
 st.info("📊 **Global Context Rule:** 99.57% Domestic (US) Traffic Consistency. International traffic is statistically negligible; the following models map exclusively domestic behavior patterns.")
 
 # Load Data
@@ -166,10 +163,18 @@ df = load_and_filter_data("usda_data_clean.csv")
 df_rd = df[df['Is_RD'] == True].copy()
 clustering_features = ['Total Views per session', 'Total Bounce rate', 'Total Average session duration']
 
+# --- DEPLOYMENT SAFETY CATCH (Fixes the ValueError) ---
+df_rd = df_rd.dropna(subset=clustering_features)
+
+if df_rd.empty:
+    st.error("⚠️ **Data Filter Error:** There are no Rural Development pages that meet the `Total Sessions` threshold. Please open your `app.py` code, locate `load_and_filter_data()`, and lower the `50000` threshold to a smaller number (like `5000` or `1000`) so the clustering algorithm has data to work with.")
+    st.stop()
+# ------------------------------------------------------
+
 # Preprocess and prepare models
 df_rd_clustered, fitted_scaler, fitted_kmeans, p_mapping, scaled_centroids = preprocess_and_cluster(df_rd, clustering_features)
 
-# APP STRUCTURE (STRICT) - Use exact Tab names
+# APP STRUCTURE (STRICT)
 tab1, tab2, tab3 = st.tabs(["System-Wide Briefing", "RD Behavioral Clustering", "Strategic AI Simulator"])
 
 with tab1:
@@ -177,20 +182,17 @@ with tab1:
     
     colA, colB = st.columns(2)
     with colA:
-        # Traffic Trends: Line chart of Total Sessions by Month and Day
         trend_df = df.groupby(['Month', 'Day'])['Total Sessions'].sum().reset_index()
         trend_df['Date_Proxy'] = trend_df['Month'].astype(str) + "/" + trend_df['Day'].astype(str)
         fig_trends = px.line(trend_df, x='Date_Proxy', y='Total Sessions', title="Traffic Trends (Filtered System-Wide)")
         st.plotly_chart(fig_trends, use_container_width=True)
         
     with colB:
-        # Device Friction: Grouped bar chart comparing Mobile vs Desktop
         device_df = df[['Page title', 'Desktop Bounce rate', 'Mobile Bounce rate']].head(20).melt(
             id_vars=['Page title'], var_name='Device', value_name='Bounce Rate'
         )
         fig_device = px.bar(device_df, x='Page title', y='Bounce Rate', color='Device', barmode='group', 
                             title="Device Friction: Mobile vs. Desktop Bounce Rates (Top Pages)")
-        # Annotation for Vital 3-Minute Window
         fig_device.add_annotation(text="Critical focus area: The Vital 3-Minute Window (0-200s)", 
                                   xref="paper", yref="paper", x=0.5, y=-0.3, showarrow=False)
         st.plotly_chart(fig_device, use_container_width=True)
@@ -208,7 +210,6 @@ with tab2:
         
     st.markdown("---")
     st.subheader("Persona Profiling (Radar Charts)")
-    # Radar Chart
     fig_radar = go.Figure()
     for index, row in scaled_centroids.iterrows():
         fig_radar.add_trace(go.Scatterpolar(
